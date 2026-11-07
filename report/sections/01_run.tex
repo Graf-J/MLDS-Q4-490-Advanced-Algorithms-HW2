@@ -1,0 +1,48 @@
+\section{Repository and How to Run the Code}
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \textbf{GitHub username} & Graf-J \\
+  \textbf{Repository} & \href{https://github.com/Graf-J/MLDS-Q4-490-Advanced-Algorithms-HW2}{\texttt{github.com/Graf-J/MLDS-Q4-490-Advanced-Algorithms-HW2}} (public)
+\end{tabularx}
+
+The project uses \href{https://docs.astral.sh/uv/}{uv} for Python and its dependencies (PyTorch with CUDA):
+
+\begin{lstlisting}
+git clone https://github.com/Graf-J/MLDS-Q4-490-Advanced-Algorithms-HW2.git
+cd MLDS-Q4-490-Advanced-Algorithms-HW2
+uv sync             # creates .venv with the exact versions from uv.lock
+uv run jupyter lab  # or open the notebooks in VS Code with the .venv kernel
+\end{lstlisting}
+
+Every part of the assignment is one Jupyter notebook that runs from top to bottom. All figures are written to \texttt{report/figures/}.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l l L@{}}
+  \toprule
+  \textbf{Part} & \textbf{Notebook} & \textbf{Content} \\
+  \midrule
+  a: CartPole & \texttt{cartpole-v1.ipynb} & Hyperparameter ladder, seed study, phase portraits, edge cases and validation tests (Section~\ref{sec:cartpole}) \\
+  b: Ms.\ Pac-Man & \texttt{mspacman-v5.ipynb} & Training with crash recovery, model selection, evaluation, heatmaps, edge cases and validation tests (Section~\ref{sec:mspacman}); the last cell opens a window in which the agent plays \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{sloppypar}
+\textbf{Running without retraining.} Every training run is saved to \texttt{checkpoints/a/<variant>/seed<k>/} (training log, network weights, config). With the default flag \texttt{RETRAIN = False}, the notebook loads a saved run instead of training it again, as long as its saved config equals the current one. A changed config is retrained automatically. All results in this report can therefore be reproduced from the repository without any training.
+
+For part (b), the repository contains the training log, the network snapshots (every 500 episodes) and the cached evaluations in \texttt{checkpoints/b/dqn/}, but not the full checkpoint with the 7\,GB replay buffer. The notebook recognises the finished run and loads it instead of training again. A new training (about 6 hours on a laptop GPU, 32\,GB of RAM recommended) resumes automatically from the last checkpoint if it is interrupted.
+\end{sloppypar}
+
+\begin{notebox}
+\textbf{How to run the validation tests.} Every test described in this report is implemented in Section~7 \emph{Validation Tests} of its notebook (part (a): Tests 1--9, part (b): Tests 1--10), each as a markdown cell followed by its code:
+\begin{itemize}
+  \item The markdown cell explains \textbf{what} the test does and its \textbf{pass criterion}; why each test validates the algorithm is discussed in this report.
+  \item The code cell runs the experiment and prints \texttt{[PASS]} or \texttt{[FAIL]} together with the measured numbers. A summary cell at the end of the notebook lists all checks.
+  \item The tests run automatically with \emph{Run All}. To rerun a single test, run all cells before Section~7 (they load the saved runs instead of training) and then the test's cells.
+  \item Tests that need extra trainings: the control experiments and ablations of part (a) are saved in \texttt{checkpoints/a/} and loaded like all other runs. The $\gamma = 0$ run and the resume test of part (b) train small runs of a few minutes. Expensive evaluations of part (b) are cached in \texttt{checkpoints/b/dqn/cache/}; deleting this folder recomputes them.
+\end{itemize}
+In this report, a passed check is marked with~\pass{} and a failed one with~\fail.
+\end{notebox}
+
+\textbf{Hardware.} The networks were trained on a single GPU (NVIDIA GeForce GTX 1650 Max-Q, 4\,GB) in a laptop with 32\,GB of RAM.

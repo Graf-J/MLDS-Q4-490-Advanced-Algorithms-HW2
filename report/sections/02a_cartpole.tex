@@ -1,0 +1,286 @@
+\section{Part (a): CartPole-v1}
+\label{sec:cartpole}
+
+\subsection{Method}
+
+A Double DQN learns $Q(s, a)$ for the two actions with the prescribed discount factor $\gamma = 0.95$.
+\begin{itemize}
+  \item \textbf{Network:} MLP $4 \to$ hidden (ReLU) $\to 2$ Q-values, trained with Adam (learning rate $5 \cdot 10^{-4}$, batch size 32).
+  \item \textbf{Replay buffer:} ring buffer of transitions $(s, a, r, s', \text{terminated})$, sampled uniformly. Learning starts once it holds 1,000 transitions; then one gradient step per environment step.
+  \item \textbf{Target network:} Polyak-averaged copy of the online network, $\theta^- \leftarrow (1-\tau)\,\theta^- + \tau\,\theta$ after every step.
+  \item \textbf{Double DQN target:} $y = r + \gamma\,(1 - \text{terminated})\; Q_{\theta^-}\big(s', \argmax_{a'} Q_\theta(s', a')\big)$. The online network selects the next action and the target network evaluates it.
+  \item \textbf{Exploration:} $\epsilon$-greedy, decaying exponentially per episode from 1 to 0.01.
+  \item \textbf{Training and evaluation:} 1,000 episodes, start states uniform in $\pm 0.15$. The evaluation is greedy ($\epsilon = 0$) over 500 episodes, where episode $i$ starts from seed $i$, so every network sees the same 500 start states.
+\end{itemize}
+
+Since $Q$ is the discounted sum of rewards of $+1$, it is bounded by $1/(1-\gamma) = 20$, and after 100 steps it is already at 99.4\,\% of that bound. \textbf{The agent therefore only ``sees'' the next $\sim$60--100 steps.} This short horizon turns out to be the main difficulty of this part.
+
+\subsection{Hyperparameter Ladder}
+
+Starting from a deliberately simple baseline, I change \textbf{one hyperparameter at a time and keep all earlier changes}. Each variant is trained for 1,000 episodes with seed 0.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  \textbf{Variant} & \textbf{Change compared with the previous variant} \\
+  \midrule
+  v0: Baseline & 32 hidden units, buffer 2,000, $\tau = 0.02$, MSE loss \\
+  v1: + buffer 50k & Buffer $2{,}000 \to 50{,}000$: the small buffer holds only the last few episodes and forgets failure states \\
+  v2: + $\tau = 0.005$ & Slower target network \\
+  v3: + 128 hidden & Wider network \\
+  v4: + Huber \& clip & Huber loss instead of MSE, gradient norm clipped at 10 \\
+  v5: + reward shaping & Learning reward $r \cdot \max\!\big(0,\, 1 - (x'/2.4)^2\big)$, with $x'$ the cart position after the step; best checkpoint on 20 validation start states (every 50 episodes) \\
+  \midrule
+  Side: $\gamma = 0.99$ & v4 with a longer horizon. Only an experiment, not a candidate for the final model \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+The shaped reward is 1 with the cart at the centre and 0 at the edge of the track. It is only used for learning. \textbf{All reported rewards are the environment rewards.}
+
+\fig{1.0}{a_variants_comparison.png}{Moving average of the last 100 episode rewards (left) and of the maximum Q-value per episode (right) for all variants.}{fig:a-variants}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+  \toprule
+  \thead[l]{Variant} & \thead[r]{Mean reward\\over training} & \thead[r]{Mean of\\last 100} & \thead[r]{Evaluation\\mean $\pm$ std} & \thead[r]{Evaluation\\episodes = 500} & \thead[r]{Cart failures\\in training} \\
+  \midrule
+  v0: Baseline & 149.9 & 302.0 & $215.1 \pm 26.0$ & 0\,\% & 287 \\
+  v1: + buffer 50k & 212.3 & 217.3 & $253.5 \pm 95.2$ & 4\,\% & 540 \\
+  v2: + $\tau = 0.005$ & 211.5 & 238.9 & $450.2 \pm 77.3$ & 65\,\% & 414 \\
+  v3: + 128 hidden & 202.8 & 232.8 & $213.4 \pm 35.7$ & 0\,\% & 767 \\
+  v4: + Huber \& clip & 172.6 & 296.4 & $500.0 \pm 0.0$ & 100\,\% & 608 \\
+  v5: + reward shaping & \textbf{323.4} & \textbf{445.9} & $\mathbf{500.0 \pm 0.0}$ & \textbf{100\,\%} & \textbf{177} \\
+  \midrule
+  Side: $\gamma = 0.99$ & 269.5 & 420.9 & $485.3 \pm 78.8$ & 97\,\% & 317 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{v4 and v5 solve the task:} all 500 greedy evaluation episodes reach the time limit.
+  \item \textbf{The ladder does not improve at every step.} v3 (the wider network alone) is worse than v2, and only pays off together with Huber loss and clipping in v4. With one seed, single steps are noisy (see \emph{Robustness Across Seeds}).
+  \item \textbf{Reward shaping has the largest effect on training:} compared with v4, the mean reward almost doubles (172.6 $\to$ 323.4) and cart failures drop from 608 to 177.
+  \item \textbf{Max Q converges to the bound of 20} for every $\gamma = 0.95$ variant (and to $\approx 100 = 1/(1-0.99)$ for the side run).
+  \item \textbf{No run reaches a moving average of 475 during training,} even though v5 is perfect in the evaluation. This is not caused by exploration: at the end, $\epsilon \approx 0.017$, and v5 still averages 494 with $\epsilon = 0.05$ (Test~7). Instead, the policy keeps changing with every gradient step: v5's validation drops to 151 at episode 400 and to 229 at episode 750 between perfect evaluations (Figure~\ref{fig:a-train}). \textbf{I therefore judge ``solved'' by the greedy evaluation of the final network.}
+\end{itemize}
+
+\subsection{Final Model (v5): Required Plots}
+
+v5 has the highest evaluation mean, and the higher mean of the last 100 training episodes of the two perfect variants, so it is the reported model. Its best checkpoint is the final network of episode 1000 (the validation reached 20/20 several times, and ties prefer the later checkpoint).
+
+\fig{1.0}{a_training_best.png}{Training of v5: (i) maximum Q-value per episode and (ii) episode reward with the moving average of the last 100 episodes. Orange: greedy validation every 50 episodes; star: best checkpoint.}{fig:a-train}
+
+\fig{0.6}{a_histogram_best.png}{(iii) 500 greedy episodes of the final network of v5.}{fig:a-hist}
+
+\textbf{(iii) Evaluation: mean = 500.0, std = 0.0} (Figure~\ref{fig:a-hist}). Every episode is truncated at the time limit, so a std of 0 is the maximum possible result, not a bug.
+
+\subsection{Robustness Across Seeds}
+\label{sec:a-seeds}
+
+\fig{0.7}{a_seeds.png}{Moving average over 3 training seeds (band: minimum to maximum) for the baseline and v5.}{fig:a-seeds}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+  \toprule
+  \thead[l]{Variant} & \thead[r]{Mean of last 100\\(3 seeds)} & \thead[r]{Evaluation mean\\(seeds 0, 1, 2)} & \thead[r]{Seeds with\\evaluation = 500} \\
+  \midrule
+  v0: Baseline & $281.9 \pm 138.7$ & 215.1, 13.8, 157.6 & 0/3 \\
+  v5: + reward shaping & $\mathbf{440.8 \pm 4.7}$ & \textbf{500.0, 500.0, 500.0} & \textbf{3/3} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{v5 is robust: every seed reaches a perfect greedy policy}, and the end of training is almost identical across seeds. The baseline is not. With seed 1 it collapses to 13.8, which is below the random policy (19.8).
+
+\subsection{Non-Standard Plot: Phase Portraits}
+
+Each panel shows one greedy episode of v5 from the \textbf{same start state} in the two phase planes of CartPole: pole angle vs.\ angular velocity (top) and cart position vs.\ cart velocity (bottom). The colour shows the time step, the red areas are the failure regions ($|\theta| > 0.21$, $|x| > 2.4$), and a red $\times$ marks a failure.
+
+\fig{1.0}{a_phase_portrait_training.png}{Phase portraits of greedy episodes of v5 at different points of training.}{fig:a-phase}
+
+\begin{itemize}
+  \item \textbf{Episodes 0 and 100:} the trajectory runs straight into the failure region, and the pole falls after 8 steps.
+  \item \textbf{Episodes 200 and 300:} the pole is already balanced (a tight zig-zag around $\theta = 0$), but the cart moves in a ``staircase'' at almost constant velocity towards the edge and leaves the track after 326 and 213 steps. \textbf{This is the short horizon of $\gamma = 0.95$ made visible:} the drift only causes a failure far beyond the $\sim$60 steps the agent sees.
+  \item \textbf{Episode 1000:} after one large initial swing, the pole stays close to upright and the cart stays within $|x| < 0.3$ for all 500 steps.
+\end{itemize}
+
+\subsection{Edge Cases}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.6cm}L@{}}
+  \toprule
+  \textbf{Edge case} & \textbf{Handling and check} \\
+  \midrule
+  Time limit (truncation at 500 steps) & Only \emph{terminated} is stored as the done flag. A truncated state still has a future, so its last transition is bootstrapped. Checked: Q at the last step of truncated episodes is 19.99, not 1 (Test~1c). \\
+  Terminal mask $(1 - \text{terminated})$ & The target of a terminal transition is only $r$, since there is no next state. Checked with $\gamma = 0$ and the negated reward (Tests~2 and 3). \\
+  Overestimation of $\max_a Q$ & Double DQN and a slow target network. Targets are computed without gradients, so only the online network is trained. Checked: Q stays at the bound of 20; without a target network it diverges (Test~4). \\
+  Replay warm-up & No update before the buffer holds 1,000 transitions. Waiting for a \emph{full} 50k buffer would delay learning by more than 100 episodes. \\
+  Buffer too small & A 2k buffer only holds the last few episodes, so a good agent forgets the failure states (v0 $\to$ v1). \\
+  Short horizon ($\gamma = 0.95$) & A slow drift of the cart is barely punished. Addressed with reward shaping (v5), checked with the end reasons (Test~8) and the phase portraits. \\
+  Reward shaping must not make failing attractive & The shaped reward is clipped at 0, so it is $\geq 0$ on the whole track: surviving longer never lowers the return, and Q stays $\leq 20$. \\
+  Selecting the checkpoint on the test set & The best checkpoint is chosen on separate validation start states (seeds from 100,000 on). The evaluation uses seeds 0--499. \\
+  Saturated evaluation & 500.0 $\pm$ 0.0 means ``every episode reached the time limit''. Harder evaluations still separate the variants (Test~7). \\
+  Moving average at the start & ``Solved at'' only counts full 100-episode windows. \\
+  Reproducibility & Python, NumPy and PyTorch are seeded, as is the first environment reset. Checked: training twice with the same seed gives identical rewards and weights; a different seed gives different rewards (Test~9 \pass). \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Tests for Validating Correctness}
+
+All tests use the final networks from above unless stated otherwise. \textbf{17 of 21 checks pass.} The four failures share one cause, which I explain after the tests.
+
+\textbf{1. Q-values vs.\ actual discounted returns.} For a state from which the episode terminates after $k$ more steps, the true discounted return is known: $G = (1-\gamma^k)/(1-\gamma)$, i.e.\ exactly 1 one step before a failure and $\approx 20$ for $k \geq 100$. To produce failures, I roll out the networks with random actions ($\epsilon \in \{0.1, 0.25, 0.5\}$) from wider start states ($\pm 0.2$) and compare the predicted $Q(s_t, a_t)$ with $G$ (Figure~\ref{fig:a-calib}).
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+  \toprule
+  \textbf{Check} & \textbf{Baseline} & \textbf{v5} \\
+  \midrule
+  (a) Q one step before a failure $< 5$ & 14.10 \fail & 13.30 \fail \\
+  (b) Correlation of Q and $G$ $> 0.7$ & 0.78 \pass & 0.49 \fail \\
+  (c) Q at the last step of a truncated episode $> 15$ & (no truncation) & 19.99 \pass \\
+  (d) Long-lived states ($k \geq 100$): Q close to $G$ & 21.4 vs.\ 20.0 \pass & 19.95 vs.\ 19.92 \pass \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\fig{1.0}{a_test_q_calibration.png}{Predicted Q-values (blue) vs.\ the actual discounted return (black) as a function of the steps until termination.}{fig:a-calib}
+
+Truncation is bootstrapped correctly and there is no runaway overestimation. However, \textbf{v5 only recognises an upcoming failure about 5 steps in advance}; before that, its Q stays at the plateau of 20. Check (b) is also partly limited by its design: $Q$ estimates the return of acting \emph{greedily} afterwards, whereas $G$ is measured under the \emph{noisy} policy. For $k > 1$, $Q > G$ is therefore expected. Only check (a) is independent of the policy.
+
+\textbf{2. $\gamma = 0$ sanity run.} With $\gamma = 0$, the target is only the immediate reward, which is always 1, so a correct implementation must learn $Q = 1$ for every state and action. After 1,000 episodes, the mean $|Q - 1|$ over 1,112 states is \textbf{0.004}, and 95\,\% of the values are within $\pm 0.010$ \pass. This confirms the target computation and the terminal mask in isolation from bootstrapping.
+
+\textbf{3. Control experiments.} Trainings with the v5 configuration that only differ in the learning signal (1,000 episodes each):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrl@{}}
+  \toprule
+  \thead[l]{Training} & \thead[r]{First 100\\episodes} & \thead[r]{Last 100\\episodes} & \thead[l]{Expected} \\
+  \midrule
+  Normal (v5) & 16.1 & 445.9 & Clearly increases \pass \\
+  Learning rate 0 & 16.9 & 9.7 & Weights never change \pass \\
+  Negated reward ($-1$ per step) & 19.4 & 7.6 & Learns to fail fast, Q $< 0$ (mean $-5.7$) \pass \\
+  \emph{Reference:} random policy & 19.8 & & \\
+  \emph{Reference:} always push left & 9.2 & & \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+With the reward flipped, the same code learns the opposite behaviour and ends below the random policy. So the improvement comes from the learning signal, not from chance.
+
+\textbf{4. Ablation of the DQN components.} v5 retrained as vanilla DQN (the target network selects and evaluates the next action) and without a target network ($\tau = 1$). I measure the overestimation at the start states: predicted $\max_a Q(s_0)$ minus the actual discounted return of the greedy episode.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+  \toprule
+  \thead[l]{Variant} & \thead[r]{Overestimation\\at $s_0$} & \thead[r]{Max Q\\(last 100)} & \thead[r]{Mean of\\last 100} \\
+  \midrule
+  Double DQN (v5) & $+0.02$ & 20.0 & 445.9 \\
+  Vanilla DQN & $+0.06$ & 20.0 & 481.5 \\
+  No target network & $+3{,}272.5$ & 15,810 & 9.7 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{The target network is essential} \pass: without it, Q diverges to about 790 times its bound and nothing is learned.
+  \item \textbf{Double DQN overestimates less than vanilla DQN} \pass, but the difference is tiny and within the noise of one seed. With a slow target network, Q saturates at the bound, so there is little room for the maximisation bias.
+\end{itemize}
+
+\textbf{5. The first 10 steps.} One greedy episode of v5 from evaluation start state 0 (pole leaning left). The TD target $y = r + \gamma \max_a Q(s', a)$ is computed with the same network.
+
+\begin{center}
+\footnotesize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}l*{10}{r}@{}}
+  \toprule
+  $t$ & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 & 9 \\
+  \midrule
+  $\theta$ & $-0.138$ & $-0.141$ & $-0.139$ & $-0.132$ & $-0.120$ & $-0.103$ & $-0.081$ & $-0.054$ & $-0.022$ & 0.004 \\
+  $\dot\theta$ & $-0.15$ & 0.10 & 0.35 & 0.59 & 0.84 & 1.09 & 1.35 & 1.62 & 1.31 & 1.01 \\
+  $Q(\text{L})$ & 19.909 & 19.913 & 19.921 & 19.924 & 19.913 & 19.904 & 19.897 & 19.892 & 19.886 & 19.881 \\
+  $Q(\text{R})$ & 19.893 & 19.894 & 19.905 & 19.910 & 19.903 & 19.899 & 19.896 & 19.897 & 19.890 & 19.883 \\
+  Action & L & L & L & L & L & L & L & R & R & R \\
+  Learning reward $r$ & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 0.999 & 0.998 & 0.997 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{The agent pushes towards the side the pole leans to,} so the cart moves back under the pole. It switches to the right once the pole swings back quickly, and $\theta$ reaches 0 at $t = 9$.
+  \item \textbf{The network is consistent with its own Bellman update:} the mean $|y - Q|$ over the 500-step episode is 0.001 \pass.
+  \item \textbf{The action gap is tiny} (median $|Q(\text{R}) - Q(\text{L})| = 0.0016$). With $\gamma = 0.95$, one wrong action from a safe state costs almost nothing.
+  \item The shaped reward falls below 1 as soon as the cart leaves the centre.
+\end{itemize}
+
+\textbf{6. Does the network react correctly to the pole?} I vary $\theta$ and $\dot\theta$ one at a time, with all other state variables at 0. Physically, the preference $Q(\text{R}) - Q(\text{L})$ must be negative at the negative end, positive at the positive end, and non-decreasing in between (Figure~\ref{fig:a-response}).
+\begin{itemize}
+  \item \textbf{Angular velocity $\dot\theta$:} monotone and correctly signed, from $-4.33$ to $+1.92$ \pass.
+  \item \textbf{Pole angle $\theta$:} correctly signed ($-0.34$ / $+0.10$), but flat at $\approx 0$ for $|\theta| < 0.18$, with a small decrease of 0.024 near $\theta = 0.2$ \fail. With $\dot\theta = 0$, all these angles are recoverable with either action, so both Q-values are $\approx 20$. The network decides mainly by $\dot\theta$.
+\end{itemize}
+
+\fig{1.0}{a_test_policy_response.png}{Action preference $Q(\text{R}) - Q(\text{L})$ vs.\ the pole angle (left) and the angular velocity (right), all other state variables 0.}{fig:a-response}
+
+\textbf{7. Harder evaluation.} The greedy evaluation is saturated at 500, so I also evaluate with 5\,\% random actions and from wider start states ($\pm 0.2$):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrr@{}}
+  \toprule
+  \textbf{Variant} & \textbf{Greedy, $\pm 0.15$} & \textbf{$\epsilon = 0.05$, $\pm 0.15$} & \textbf{Greedy, $\pm 0.2$} \\
+  \midrule
+  v4: + Huber \& clip & $500.0 \pm 0.0$ & $395.5 \pm 151.6$ & $500.0 \pm 0.0$ \\
+  v5: + reward shaping & $500.0 \pm 0.0$ & $\mathbf{494.0 \pm 52.3}$ & $499.1 \pm 21.0$ \\
+  Side: $\gamma = 0.99$ & $485.3 \pm 78.8$ & $397.4 \pm 194.8$ & $460.6 \pm 123.3$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+v5 solves the standard evaluation \pass, and it is \textbf{by far the most robust to random actions}. v4 is perfect when greedy but brittle: random pushes move the cart, and without shaping it does not bring the cart back to the centre.
+
+\textbf{8. Why do episodes end?} An episode ends when the pole falls, when the cart leaves the track, or at the time limit:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccr@{}}
+  \toprule
+  \thead[l]{Variant} & \thead{Training: pole /\\cart / time limit} & \thead{Evaluation: pole /\\cart / time limit} & \thead[r]{Median max $|x|$\\(evaluation)} \\
+  \midrule
+  v0: Baseline & 601 / 287 / 112 & 0 / \textbf{500} / 0 & 2.41 \\
+  v4: + Huber \& clip & 365 / \textbf{608} / 27 & 0 / 0 / 500 & 0.39 \\
+  v5: + reward shaping & 361 / 177 / 462 & 0 / 0 / 500 & \textbf{0.15} \\
+  Side: $\gamma = 0.99$ & 348 / 317 / 335 & 17 / 0 / 483 & 1.74 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\fig{1.0}{a_test_end_reasons.png}{How training episodes end, per block of 100 episodes.}{fig:a-ends}
+
+\begin{itemize}
+  \item \textbf{With $\gamma = 0.95$, balancing the pole is easy; keeping the cart on the track is the actual difficulty.} The baseline loses \emph{every} evaluation episode by the cart leaving the track while the pole stays up.
+  \item \textbf{Both fixes of the short horizon reduce the cart failures} compared with v4: $\gamma = 0.99$ to 317 \pass\ and reward shaping to 177 \pass. Only reward shaping also keeps the cart centred.
+\end{itemize}
+
+\textbf{9. Reproducibility.} See the edge cases above \pass.
+
+\begin{notebox}
+\textbf{Why four checks fail (Tests 1a, 1b and 6).} The update rule itself is correct, as Tests 2, 3, 4a and 5 confirm. \textbf{The Q-function is only accurate where the replay buffer has data.} A good agent rarely visits states close to a failure, so there the network extrapolates its plateau value of 20. Together with the tiny action gaps of $\gamma = 0.95$, this produces the high Q-values just before a failure (Test~1a) and the flat, slightly non-monotone response to $\theta$ (Test~6). Since the greedy policy never gets close to these states, this does not hurt performance, but it explains why v4 is brittle under random actions (Test~7).
+\end{notebox}
+
+\FloatBarrier
+\begin{summarybox}{Summary of Part (a)}
+\begin{itemize}
+  \item \textbf{Final model (v5):} Double DQN, 128 hidden units, buffer 50k, $\tau = 0.005$, Huber loss with clipping, and reward shaping towards the centre. It reaches \textbf{500.0 $\pm$ 0.0} in the greedy evaluation for all 3 seeds and is the most robust to random actions.
+  \item \textbf{Main insight:} with $\gamma = 0.95$, the agent only sees $\sim$60 steps ahead, so the cart slowly drifting off the track is the dominant failure. Reward shaping fixes this best.
+  \item \textbf{Validation:} 17 of 21 checks pass. The target network is essential, and the target computation is exact. The failed checks reveal that Q-values are inaccurate in rarely visited near-failure states.
+\end{itemize}
+\end{summarybox}

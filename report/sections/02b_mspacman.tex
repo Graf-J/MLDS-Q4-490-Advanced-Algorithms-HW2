@@ -1,0 +1,195 @@
+\section{Part (b): MsPacman-v5}
+\label{sec:mspacman}
+
+\subsection{Method}
+
+A Double DQN with a dueling head learns Ms.\ Pac-Man from the game images with the prescribed $\gamma = 0.99$ and all 9 actions. One training run takes about 6 hours, so \textbf{there is no hyperparameter ladder}. Instead, a single run (seed 0) combines the insights of part (a) with the standard Atari DQN settings.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.1cm}L@{}}
+  \toprule
+  \textbf{Component} & \textbf{Choice and reason} \\
+  \midrule
+  Environment & \texttt{ALE/MsPacman-v5} with its defaults: frameskip 4 (one \emph{agent step} = 4 frames), sticky actions with probability 0.25, time limit 108,000 frames. \\
+  State & The assignment's \texttt{preprocess\_observation} (88$\times$80 int8, divided by 128), \textbf{4 stacked frames}. A single frame shows neither the direction of movement nor the ghosts, which are not drawn in every frame (Figure~\ref{fig:b-pre}). \\
+  Network & Nature CNN (32@8$\times$8/4, 64@4$\times$4/2, 64@3$\times$3/1) with a \textbf{dueling head}: separate streams of 512 units for the state value $V(s)$ and the advantages $A(s, a)$, combined as $Q = V + A - \text{mean}_a A$ (2.8M parameters). In most states of Ms.\ Pac-Man, the actions are almost equivalent (part (a) already showed tiny action gaps), so learning $V$ separately is cheap and helps. \\
+  Algorithm & Double DQN target, Huber loss, gradient norm clipped at 10, Adam with a constant learning rate of $10^{-4}$ ($\epsilon_{\text{Adam}} = 1.5 \cdot 10^{-4}$), batch 32. Of the advanced techniques the assignment suggests, Huber loss and an $\epsilon$ scheduler are used; a learning-rate scheduler is not, since the slow target network already keeps the training free of divergence. \\
+  Target network & Polyak update with $\tau = 0.001$ after every gradient step (time constant $\approx$ 4,000 agent steps). Part (a): the slow target network was essential. \\
+  Replay buffer & \textbf{1M transitions}, stored as single int8 frames (7\,GB instead of 28\,GB for stacked states). Part (a): a large buffer prevents forgetting. Uniform sampling. \\
+  Updates & 50,000 random transitions before the first update, then one gradient step every 4 agent steps. \\
+  Rewards & Learning reward \textbf{clipped to $\text{sign}(r) \in \{0, 1\}$}: a dot gives 10 points, a ghost up to 1,600, so the raw scale differs by 160$\times$. Q is therefore bounded by $1/(1-\gamma) = 100$. \textbf{All reported scores are raw game scores.} \\
+  Lives & A lost life is \textbf{terminal for the TD target} (no bootstrapping through a death), but the game continues. One episode is one full game with 3 lives. \\
+  Exploration & $\epsilon$-greedy per agent step, linear from 1.0 to 0.1 over the first 1M steps and to 0.01 at 3M steps. \\
+  Length & 6,000 episodes (the upper end of the assignment's range). \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\fig{1.0}{b_preprocessing.png}{Raw frame, preprocessed frame and the stack of 4 frames the network sees. Ms.\ Pac-Man is set to the contrast value (black); the ghosts flicker between frames.}{fig:b-pre}
+
+\textbf{Crash recovery.} Because the run lasted a night, every 250 episodes a full checkpoint (networks, optimiser, replay buffer, all random-generator states, log) is written to a new folder and then swapped in by renaming, so a crash while writing never destroys the last good checkpoint. Every episode starts from its own seed and the GPU runs in deterministic mode, so a resumed run is \textbf{bit-identical} to an uninterrupted one (Test~10).
+
+\subsection{Training: Required Plots (i) and (ii)}
+
+The training took \textbf{5.8 hours for 4.46M agent steps} (17.8M frames, $\approx$ 213 agent steps per second) on a laptop GPU (GTX 1650 Max-Q).
+
+\fig{1.0}{b_training.png}{Training: (i) maximum Q-value per episode, (ii) episode reward (game score) with the moving average of the last 100 episodes, the exploration rate and the episode length.}{fig:b-train}
+
+\begin{itemize}
+  \item \textbf{The agent learns steadily:} the moving average rises from $\approx$ 250 (random play) to $\approx$ 1,850, and the mean score of the last 500 episodes is \textbf{1,848, compared with 296 for the first 500}. The best moving average is 1,958.
+  \item \textbf{The games get longer:} from $\approx$ 500 to $\approx$ 900 agent steps, so the agent survives longer, not only eats faster.
+  \item \textbf{Learning follows the exploration schedule:} the curve is almost flat while $\epsilon > 0.65$ (first $\sim$750 episodes), rises fastest while $\epsilon$ decays to 0.1 (episode $\approx$ 1,750), and flattens at about 1,700--1,900 after $\epsilon$ reaches 0.01 (episode $\approx$ 4,350).
+  \item \textbf{(i) Max Q stays well below the bound of 100.} It rises with the score, overshoots to 57 around episode 3,200 and settles at 40--45. There is no sign of divergence.
+\end{itemize}
+
+\subsection{Model Selection and Required Plot (iii)}
+
+As in part (a), the reported network is chosen on \textbf{validation games} (seeds from 10,000 on), separate from the 500 test games (seeds 0--499). Every snapshot (every 500 episodes) plays 30 greedy validation games, and the best one is evaluated on the test games.
+
+\fig{0.75}{b_snapshots.png}{Greedy validation score (30 games) of the snapshots during training. The star marks the selected snapshot.}{fig:b-snap}
+
+\fig{0.75}{b_histogram.png}{(iii) 500 greedy test games of the selected network (episode 4,000), with the random policy as reference.}{fig:b-hist}
+
+\textbf{(iii) Evaluation of the selected network (episode 4,000): mean = 1,790.6, std = 286.8} (Figure~\ref{fig:b-hist}).
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+  \toprule
+  \thead[l]{Network (500 greedy test games)} & \thead[r]{Mean $\pm$ std} & \thead[r]{Median} & \thead[r]{Max} & \thead[r]{Mean length} \\
+  \midrule
+  \textbf{Selected snapshot (episode 4,000)} & $\mathbf{1{,}790.6 \pm 286.8}$ & 1,780 & 3,300 & 924 \\
+  Final weights (episode 6,000) & $1{,}842.7 \pm 624.7$ & 1,715 & 4,740 & 902 \\
+  Random policy & $266.2 \pm 164.6$ & 240 & 2,290 & 499 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{The trained agent scores 6.7$\times$ the random policy}, and the two histograms barely overlap.
+  \item \textbf{Selected vs.\ final network:} on validation, episode 4,000 is marginally ahead (1,857 vs.\ 1,835), on the test games the final network has a slightly higher mean (+52, about 1.7 standard errors) but more than twice the spread. 30 validation games cannot separate them. I report the selected network, as fixed before looking at the test games.
+  \item \textbf{After episode 4,000, the validation score plateaus} at 1,600--1,850 (Figure~\ref{fig:b-snap}): more episodes at $\epsilon = 0.01$ do not help this configuration any more.
+  \item \textbf{For orientation:} the original DQN paper (Mnih et al., 2015) reports 2,311 for Ms.\ Pac-Man after 50M agent steps, about 11$\times$ the training used here, with a slightly different evaluation protocol (no sticky actions).
+\end{itemize}
+
+\subsection{Non-Standard Plot: Where Does Ms.\ Pac-Man Go?}
+
+Ms.\ Pac-Man's position is read from her colour in the raw frame. The heatmaps count how many steps she spends at each position over 10 greedy games, drawn over the maze.
+
+\fig{1.0}{b_heatmap.png}{Ms.\ Pac-Man's position over 10 greedy games (log scale) for the random policy and four snapshots.}{fig:b-heat}
+
+\begin{itemize}
+  \item \textbf{Random policy:} she stays around the start position in the centre and dies there.
+  \item \textbf{Episode 500:} long routes, but only through the lower half of the maze.
+  \item \textbf{Episode 2,500:} most of the maze, but the top corridors are still almost never reached.
+  \item \textbf{Episodes 4,000 and 6,000:} the \textbf{whole maze}, including the top corridors and the tunnels at the left and right edge. The agent has learned to clear the board, not only to collect the dots near the start.
+\end{itemize}
+
+The second plot follows the Q-value through one greedy game of the selected network:
+
+\fig{1.0}{b_q_trace.png}{$\max_a Q(s, a)$ during one greedy test game (score 1,660), with power pellets, ghosts or fruit eaten, and lost lives.}{fig:b-trace}
+
+\begin{itemize}
+  \item \textbf{When play starts, Q jumps to its maximum ($\approx$ 45)} and then \textbf{falls steadily as the dots are eaten}: fewer dots left means less reward to come. This is exactly what a Q-value should do.
+  \item \textbf{A power pellet lifts Q} (step $\approx$ 350): eatable ghosts are worth extra rewards.
+  \item \textbf{Before every lost life, Q drops to $\approx$ 0--2}: the network sees death coming. After the respawn, Q is flat at $\approx$ 10 during the pause, lower than at the start because fewer dots are left.
+  \item \textbf{Unexpected: during the first 67 steps (the start delay, in which the game ignores all actions), Q is $\approx -11$}, although all rewards are $\geq 0$. This is examined in Test~6.
+\end{itemize}
+
+\subsection{Edge Cases}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.6cm}L@{}}
+  \toprule
+  \textbf{Edge case} & \textbf{Handling and check} \\
+  \midrule
+  Sticky actions & Kept, as v5 prescribes. Even the greedy policy is therefore stochastic. Without them, every greedy game is identical (Test~9). \\
+  Flickering sprites & The ghosts are not drawn in every frame; with 4 stacked frames each ghost is visible in at least one (Figure~\ref{fig:b-pre}). \\
+  Life loss vs.\ game over & A lost life is terminal for the TD target, but the game is not reset; only the third life ends the episode (Test~3 \pass). \\
+  Time limit & A truncated game is not terminal. Its last step has no stored next state, so it is never sampled instead of being treated as terminal (Test~2 \pass). \\
+  Frame stack at a game start & Filled with the first frame. In the buffer, stacks never reach back into the previous game but repeat the first frame, exactly like the online stack (Test~2 \pass). \\
+  Buffer wrap-around & A sample needs all 4 frames of its stack still stored and its next state already stored (Test~2 \pass). \\
+  Reward scale & Clipped to $\{0, 1\}$ for learning, raw score reported. Q is bounded by 100 (Test~6a \pass). \\
+  int8 arithmetic of the preprocessing & \texttt{img.sum} gives unsigned integers, so \texttt{img // 3 - 128} wraps around; the cast to int8 still gives the right value (Test~1 \pass). \\
+  Overestimation & Double DQN, slow target network, targets without gradients (Test~6). \\
+  Crash during the overnight run & Atomic checkpoints with the replay buffer and all generator states; per-episode seeds; deterministic GPU algorithms (Test~10 \pass). \\
+  Model selection on the test set & Snapshots are compared on validation seeds (10,000+), the test uses seeds 0--499. \\
+  Memory & 1M frames as int8: 7\,GB of RAM; the full buffer is loaded from a checkpoint without a second copy. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Tests for Validating Correctness}
+
+All tests use the selected network unless stated otherwise. Tests 1--3 check that the agent learns from the right data (the inputs, transitions and terminal signals the algorithm depends on), Tests 4--10 check the learning behaviour itself. Each criterion was fixed before the run. \textbf{23 of 24 checks pass.}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{2.5cm}Lp{3.6cm}@{}}
+  \toprule
+  \textbf{Test} & \textbf{What is checked, and why it validates the algorithm} & \textbf{Result} \\
+  \midrule
+  1. Preprocessing & Frame is 88$\times$80 int8, equals a signed reference computation, Ms.\ Pac-Man's pixels become $-128$. \emph{Why:} the int8 cast wraps around; a wrong sign would hide Ms.\ Pac-Man from the network. & 3/3 \pass \\
+  2. Replay buffer & Small buffer (64 slots, 421 frames, wrapped around): sampled stacks of $s$ and $s'$ equal the online stacks, no stack mixes two games, truncated last steps are never sampled. \emph{Why:} index-based stacking is the most error-prone part; a mismatch would train on states the agent never sees. & 5/5 \pass \\
+  3. Life loss & A random game: 3 TD-terminal steps, only the last one ends the game, no reset in between. \emph{Why:} the terminal signal decides where the TD target stops bootstrapping. & 3/3 \pass \\
+  4. Learning & Last 500 training episodes $> 2\times$ the first 500; test score $> 2\times$ random. \emph{Why:} the grading criterion; improvement must come from learning, not from chance. & 296 $\to$ 1,848; 1,791 vs.\ 266 \pass \\
+  5. Progress & Validation score of the 13 snapshots rises with training (Spearman $\rho$); best snapshot $> 3\times$ the untrained one. \emph{Why:} greedy play on fixed games, independent of $\epsilon$ and of the training noise. & $\rho = 0.93$; 70 $\to$ 1,857 \pass \\
+  6. Q vs.\ actual return & (a) max Q $< 1/(1-\gamma) = 100$; (b) correlation of Q with the actual discounted return $G$ along greedy games $> 0.5$; (c) Q in the 10 steps before a lost life $< 80\,\%$ of its mean. \emph{Why:} Q must estimate the return, not only rank actions. & (a) 57.3 \pass\ (b) 0.46 \fail\ (c) 4.5 vs.\ 12.5 \pass \\
+  7. $\gamma = 0$ run & Changed parameter: with $\gamma = 0$, Q must equal the probability of a reward, so all Q in $[-0.1, 1.1]$ and mean Q = reward rate. \emph{Why:} tests the target without bootstrapping, where the right answer is known. & $[-0.03, 0.34]$; 0.053 vs.\ 0.052 \pass \\
+  8. First 10 steps & Q of all actions, action, reward and TD target step by step; mean $|\text{TD error}| < 1$ over a full game. \emph{Why:} a trained network must be close to a fixed point of its own Bellman update. & 0.48 \pass \\
+  9. Harder evaluation & Reduced and added stochasticity: 100 games without sticky actions (deterministic) and with $\epsilon = 0.05$, both $> 2\times$ random. \emph{Why:} the policy must not depend on one lucky sequence of events. & 1,710 $\pm$ 0; 1,782 $\pm$ 420 \pass \\
+  10. Exact resume & 6 episodes in one go vs.\ 3 episodes, ``crash'', resume, 3 more: identical log and weights. \emph{Why:} the reported run was resumable; a resume must not change the result. & 2/2 \pass \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\fig{1.0}{b_test_q_calibration.png}{Test 6: predicted $Q(s_t, a_t)$ vs.\ the actual discounted return $G_t$ of the clipped rewards (cut at every lost life) over 10 greedy test games (left), and along one game (right).}{fig:b-calib}
+
+\begin{itemize}
+  \item \textbf{Test 6 (Q vs.\ return):} unlike part (a), these roll-outs are greedy, so Q and $G$ refer to the same policy. During play, Q follows $G$ closely, but the start of play is clearly \textbf{overestimated} (44.8 vs.\ $\approx$ 27 in all 10 games). Over all steps outside the start delay, the mean Q is 14.4 vs.\ a mean $G$ of 9.7.
+  \item \textbf{Test 7} checks the target computation in isolation from bootstrapping: Q matches the reward rate to 0.001.
+  \item \textbf{Test 8:} the literal first 10 steps fall into the start delay: all 9 Q-values lie within 0.02 of each other ($\approx -11.5$), which is correct in so far as the action does not matter there. The table therefore also shows the first 10 steps after the delay, when Ms.\ Pac-Man starts to eat (test game 0; $y = r + \gamma \max_a Q(s', a)$ with the same network):
+\end{itemize}
+
+\begin{center}
+\footnotesize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}l*{10}{r}@{}}
+  \toprule
+  Step $t$ & 67 & 68 & 69 & 70 & 71 & 72 & 73 & 74 & 75 & 76 \\
+  \midrule
+  Action & \action{UP} & \action{UP} & \action{UP} & \action{DOWN} & \action{DOWN} & \action{DOWN} & \action{UPRIGHT} & \action{DOWN} & \action{NOOP} & \action{NOOP} \\
+  $\max_a Q(s_t, a)$ & 44.82 & 44.04 & 44.08 & 44.12 & 43.12 & 43.10 & 43.49 & 42.59 & 42.69 & 43.05 \\
+  $Q(s_t, \text{\action{LEFT}})$ & 44.58 & 43.72 & 43.30 & 43.13 & 42.14 & 42.82 & 43.39 & 42.54 & 42.59 & 43.05 \\
+  Raw reward & 10 & 0 & 0 & 10 & 0 & 0 & 10 & 0 & 0 & 0 \\
+  Clipped reward $r$ & 1 & 0 & 0 & 1 & 0 & 0 & 1 & 0 & 0 & 0 \\
+  TD target $y$ & 44.60 & 43.64 & 43.68 & 43.69 & 42.67 & 43.06 & 43.17 & 42.26 & 42.62 & 42.77 \\
+  TD error $y - Q(s_t, a_t)$ & $-0.22$ & $-0.40$ & $-0.40$ & $-0.44$ & $-0.45$ & $-0.04$ & $-0.33$ & $-0.33$ & $-0.07$ & $-0.29$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{The Bellman update is visible step by step.} Whenever a dot is eaten ($r = 1$ at steps 67, 70, 73), Q drops by about 1 in the next step (44.8 $\to$ 44.0, 44.1 $\to$ 43.1, 43.5 $\to$ 42.6): one reward fewer is left to collect. Between two dots, Q rises again slightly as the next dot comes closer and is discounted less.
+  \item \textbf{The TD errors are small but all negative} ($-0.04$ to $-0.45$): the network predicts slightly more than its own next-step target, the same overestimation at the start of play that Test~6 found. Over the whole game, the mean $|\text{TD error}|$ is 0.48 \pass.
+  \item \textbf{The policy decides on tiny margins.} At step 67, \action{LEFT} is only 0.24 below the best action; the median action gap over the game is 0.028. As in part (a), most decisions are close calls, which is why the dueling head (learning $V$ separately) suits the game.
+  \item \textbf{Test 9:} with 5\,\% random actions, the mean barely changes (1,782). \textbf{Without sticky actions, all 100 games are identical (1,710 $\pm$ 0):} the emulator is otherwise deterministic, so the whole spread of the evaluation comes from the sticky actions.
+\end{itemize}
+
+\begin{notebox}
+\textbf{Why Test 6b fails: the start delay.} At the start of every game, Ms.\ Pac-Man cannot move for 67 agent steps. In these steps, the network predicts $Q \approx -11$, although with rewards $\geq 0$ every true Q-value is positive ($\approx 0.99^{67-t} \cdot 27$). These 7.6\,\% of the steps form the horizontal band at $Q \approx -11$ in Figure~\ref{fig:b-calib}. \textbf{Without them, the correlation is 0.80}, well above the threshold.
+
+\smallskip
+The delay states are not frozen frames: the ghosts move in a cycle of 16 steps, so the same stack appears four times at different distances to the start of play. The negative value appears in every snapshot and moves with training ($-0.6$ at episode 500, $-11.5$ at episode 4,000, $-2.0$ at episode 6,000), and the TD errors there are consistently positive ($+0.1$), so the update pulls it in the right direction but does not win against the generalisation from the rest of the network. I could not explain the cause with the remaining time. \textbf{It does not affect the score}, since the game ignores every action during the delay, but it is a real error of the value function.
+\end{notebox}
+
+\FloatBarrier
+\begin{summarybox}{Summary of Part (b)}
+\begin{itemize}
+  \item \textbf{Model:} Double DQN with a dueling head, 4 stacked frames, 1M replay buffer, slow Polyak target network, Huber loss with clipping and clipped rewards; 6,000 episodes (4.46M agent steps, 5.8 hours).
+  \item \textbf{Result:} the selected network (episode 4,000) scores \textbf{1,790.6 $\pm$ 286.8} over 500 greedy test games, 6.7$\times$ the random policy (266.2). It clears the whole maze instead of staying near the start, and its Q-value reacts sensibly to dots, power pellets and approaching death.
+  \item \textbf{Validation:} 23 of 24 checks pass, including a bit-identical resume after a simulated crash. The failed check reveals a negative Q-value during the start delay, which does not affect play. Apart from it, Q follows the actual returns ($r = 0.80$) but overestimates them, especially at the start of play.
+\end{itemize}
+\end{summarybox}

@@ -1,0 +1,24 @@
+\section{Given an Additional 3 Months, What Other Validation Tests and Experiments Would I Perform?}
+\label{sec:outlook}
+\markboth{Outlook: Three More Months}{}
+
+\subsection{CartPole (a)}
+
+\begin{itemize}
+  \item \textbf{Fix the inaccurate Q-values near failures} (Tests~1a and 6): prioritised replay, keeping failure transitions in the buffer longer, or training from wider and perturbed start states. Then check whether Q one step before a failure drops to $\approx 1$.
+  \item \textbf{A cleaner calibration test:} add random actions only in the first steps and then act greedily, so that the measured return is the one $Q$ actually estimates.
+  \item \textbf{Stable training:} the policy still collapses briefly during training. A learning-rate scheduler, a slower $\epsilon$ decay, or a larger batch should show whether the moving average can stay above 475.
+  \item \textbf{More seeds (e.g.\ 10)} for every variant of the ladder, to separate real effects from noise (e.g.\ Double vs.\ vanilla DQN, or the drop at v3).
+  \item \textbf{Remove the time limit} (5,000 or more steps) and add disturbances (random pushes, observation noise, other pole lengths), since the standard evaluation is saturated.
+\end{itemize}
+
+\subsection{Ms.\ Pac-Man (b)}
+
+\begin{itemize}
+  \item \textbf{Find the cause of the negative Q-values in the start delay} (Test~6b): train a run in which the delay steps are skipped or excluded from the buffer and check whether the rest of the value function changes; inspect $V$ and $A$ of the dueling head separately.
+  \item \textbf{A hyperparameter ladder, as in part (a),} with several seeds per variant: buffer size, $\tau$, learning rate and the $\epsilon$ schedule. Ablations of Double DQN and the dueling head would show which component matters here; with one seed, I can only show that the combination works.
+  \item \textbf{Train longer and stronger:} the score plateaus after episode 4,000. Prioritised replay, n-step returns and distributional or Rainbow-style DQN are known to raise Ms.\ Pac-Man scores a lot; 50M agent steps as in the DQN paper would show whether the plateau is the method or the budget.
+  \item \textbf{Reduce the overestimation at the start of play} (Q 45 vs.\ an actual return of 27) and check whether a better-calibrated Q also plays better.
+  \item \textbf{Harder and broader evaluation:} other game modes and difficulties of \texttt{MsPacman-v5}, the later mazes (does the agent ever clear the first board?), and the generalisation to unseen start conditions such as random no-op starts.
+  \item \textbf{More analysis of the behaviour:} how often the agent chases eatable ghosts after a power pellet, and where in the maze it loses its lives.
+\end{itemize}
