@@ -1,0 +1,21 @@
+{
+  "name": "ctrl_normal",
+  "label": "Normal",
+  "gamma": 0.95,
+  "episodes": 300,
+  "hidden": [
+    128
+  ],
+  "buffer_size": 50000,
+  "batch_size": 32,
+  "learning_starts": 1000,
+  "lr": 0.0005,
+  "tau": 0.005,
+  "loss": "huber",
+  "grad_clip": 10.0,
+  "double": true,
+  "eps_start": 1.0,
+  "eps_end": 0.01,
+  "eps_decay": 5.0,
+  "reward_sign": 1.0
+}
